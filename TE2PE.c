@@ -274,17 +274,11 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
         else if (!strncmp(sectionHeader->Name, ".reloc", sizeof(sectionHeader->Name))) {
             //TODO: add more sanity checks in case of incorrect images
         }
-        // Try apple PR
-        else if (!strncmp(sectionHeader->Name, "_TEXT_PR", sizeof(sectionHeader->Name))) {
-            //TODO: add more sanity checks in case of incorrect images
-        }
-        // Try apple RE
-        else if (!strncmp(sectionHeader->Name, "_TEXT_RE", sizeof(sectionHeader->Name))) {
-            //TODO: add more sanity checks in case of incorrect images
-        }
         else {
-            sectionHeader->Name[7] = 0x00; //Ensure trailing zero
-            printf("convert: unknown section named %s found in TE image\n", sectionHeader->Name);
+            UINT8 name[sizeof(sectionHeader->Name) + 1];
+            name[sizeof(sectionHeader->Name)] = 0; // Ensure trailing zero
+            memcpy(name, sectionHeader->Name, sizeof(sectionHeader->Name));
+            printf("convert: unknown section \"%s\" found in TE image\n", name);
         }
     }
 
@@ -326,7 +320,7 @@ int main(int argc, char* argv[])
     // Check arguments count
     if (argc != 3) {
         // Print usage and exit
-        printf("TE2PE v0.1.0\nThis utility tries to convert Terse Executable image into PE32 image\n\n"
+        printf("TE2PE v0.1.1 - converts Terse Executable image into PE32 image\n\n"
                "Usage: TE2PE te.bin pe.bin\n");
         return ERR_INVALID_PARAMETER;
     }
@@ -382,6 +376,5 @@ int main(int argc, char* argv[])
     // Close output file 
     fclose(file);
 
-	return ERR_SUCCESS;
+    return ERR_SUCCESS;
 }
-
