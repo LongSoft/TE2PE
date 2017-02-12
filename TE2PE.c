@@ -285,7 +285,6 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
         else {
             sectionHeader->Name[7] = 0x00; //Ensure trailing zero
             printf("convert: unknown section named %s found in TE image\n", sectionHeader->Name);
-            return ERR_INVALID_IMAGE;
         }
     }
 
