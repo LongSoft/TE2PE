@@ -204,7 +204,7 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     EFI_IMAGE_SECTION_HEADER* sectionHeader;
 
     // Check arguments for sanity
-    if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || !(*peOut) || !peOutSize) {
+    if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || || !peOutSize) {
         printf("convert: called with invalid parameter\n");
         return ERR_INVALID_PARAMETER;
     }
