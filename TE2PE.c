@@ -376,6 +376,5 @@ int main(int argc, char* argv[])
     // Close output file 
     fclose(file);
 
-	return ERR_SUCCESS;
+    return ERR_SUCCESS;
 }
-
