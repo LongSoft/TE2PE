@@ -1,9 +1,6 @@
-// Converts Terse Executable (TE) image to PE32 image
+// Converts Terse Executable (TE) image to PE32(+) image
 // Author: Nikolaj Schlej aka CodeRush
 // License: WTFPL2 (http://wtfpl2.com/)
-
-// I don't know any machine with 64-bit PEI, so only 32-bit images are supported right now
-// If you've found 64-bit TE file, please open the issue on project's GitHub repo
 
 #include <stdio.h>
 #include <stdint.h>
@@ -20,8 +17,8 @@
 #define UINTN  unsigned int
 #define VOID   void
 
-// Only I386 images are supported now
 #define IMAGE_FILE_MACHINE_I386     0x014c
+#define IMAGE_FILE_MACHINE_ARM64    0xAA64
 
 #define EFI_IMAGE_DOS_SIGNATURE     0x5A4D     // MZ
 #define EFI_IMAGE_PE_SIGNATURE      0x00004550 // PE
@@ -136,11 +133,60 @@ typedef struct _EFI_IMAGE_OPTIONAL_HEADER32{
 } EFI_IMAGE_OPTIONAL_HEADER32;
 
 // PE32 image header
-typedef struct _EFI_IMAGE_PE_HEADER {
+typedef struct _EFI_IMAGE_NT_HEADERS32 {
     UINT32 Signature;
     EFI_IMAGE_FILE_HEADER FileHeader;
     EFI_IMAGE_OPTIONAL_HEADER32 OptionalHeader;
-} EFI_IMAGE_PE_HEADER;
+} EFI_IMAGE_NT_HEADERS32;
+
+#define EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC 0x20b
+
+typedef struct {
+  //
+  // Standard fields.
+  //
+  UINT16                    Magic;
+  UINT8                     MajorLinkerVersion;
+  UINT8                     MinorLinkerVersion;
+  UINT32                    SizeOfCode;
+  UINT32                    SizeOfInitializedData;
+  UINT32                    SizeOfUninitializedData;
+  UINT32                    AddressOfEntryPoint;
+  UINT32                    BaseOfCode;
+  //
+  // NT additional fields.
+  //
+  UINT64                    ImageBase;
+  UINT32                    SectionAlignment;
+  UINT32                    FileAlignment;
+  UINT16                    MajorOperatingSystemVersion;
+  UINT16                    MinorOperatingSystemVersion;
+  UINT16                    MajorImageVersion;
+  UINT16                    MinorImageVersion;
+  UINT16                    MajorSubsystemVersion;
+  UINT16                    MinorSubsystemVersion;
+  UINT32                    Win32VersionValue;
+  UINT32                    SizeOfImage;
+  UINT32                    SizeOfHeaders;
+  UINT32                    CheckSum;
+  UINT16                    Subsystem;
+  UINT16                    DllCharacteristics;
+  UINT64                    SizeOfStackReserve;
+  UINT64                    SizeOfStackCommit;
+  UINT64                    SizeOfHeapReserve;
+  UINT64                    SizeOfHeapCommit;
+  UINT32                    LoaderFlags;
+  UINT32                    NumberOfRvaAndSizes;
+  EFI_IMAGE_DATA_DIRECTORY  DataDirectory[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES];
+} EFI_IMAGE_OPTIONAL_HEADER64;
+
+//PE32+ image header
+typedef struct {
+  UINT32                      Signature;
+  EFI_IMAGE_FILE_HEADER       FileHeader;
+  EFI_IMAGE_OPTIONAL_HEADER64 OptionalHeader;
+} EFI_IMAGE_NT_HEADERS64;
+
 
 // Section Table. This table immediately follows the optional header.
 typedef struct _EFI_IMAGE_SECTION_HEADER {
@@ -192,16 +238,20 @@ typedef struct {
 static EFI_IMAGE_DOS_HEADER DosHeader = { 0 };
 
 // PE header
-static EFI_IMAGE_PE_HEADER PeHeader = { 0 };
+static EFI_IMAGE_NT_HEADERS32 PeHeader = { 0 };
 
-// Convert function
-UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
+// PE32+ header
+static EFI_IMAGE_NT_HEADERS64 PePlusHeader = { 0 };
+
+//32bit convert
+UINT8 convert32(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
 {
     UINTN  i;
     UINT8* pe;
     UINTN  peSize;
     EFI_IMAGE_TE_HEADER* teHeader;
     EFI_IMAGE_SECTION_HEADER* sectionHeader;
+    int is64 = 0;
 
     // Check arguments for sanity
     if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || !peOutSize) {
@@ -242,7 +292,6 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     PeHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = teHeader->DataDirectory[0].Size;
     PeHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress = teHeader->DataDirectory[1].VirtualAddress;
     PeHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].Size = teHeader->DataDirectory[1].Size;
-    
     // Not filled are e_lfanew, SizeOfHeaders, SizeOfCode, SizeOfInitData, SizeOfUninitData, BaseOfData
 
     // Parse sections to determine unfilled elements
@@ -283,7 +332,7 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     }
 
     // Calculate e_lfanew
-    DosHeader.e_lfanew = teHeader->StrippedSize - sizeof(EFI_IMAGE_PE_HEADER);
+    DosHeader.e_lfanew = teHeader->StrippedSize - sizeof(EFI_IMAGE_NT_HEADERS32);
 
     // Allocate buffer for PE image
     pe = (UINT8*)malloc(peSize);
@@ -296,7 +345,7 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
 
     // Copy filled data into newly allocated buffer
     memcpy(pe, &DosHeader, sizeof(EFI_IMAGE_DOS_HEADER));
-    memcpy(pe + DosHeader.e_lfanew, &PeHeader, sizeof(EFI_IMAGE_PE_HEADER));
+    memcpy(pe + DosHeader.e_lfanew, &PeHeader, sizeof(EFI_IMAGE_NT_HEADERS32));
     memcpy(pe + teHeader->StrippedSize, te, teSize);
 
     // Fill output parameters
@@ -304,6 +353,149 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     *peOutSize = peSize;
 
     return ERR_SUCCESS;
+}
+
+//64bit convert
+UINT8 convert64(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
+{
+    UINTN  i;
+    UINT8* pe;
+    UINTN  peSize;
+    EFI_IMAGE_TE_HEADER* teHeader;
+    EFI_IMAGE_SECTION_HEADER* sectionHeader;
+
+    // Check arguments for sanity
+    if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || !peOutSize) {
+        printf("convert64: called with invalid parameter\n");
+        return ERR_INVALID_PARAMETER;
+    }
+    
+    // Check TE header to be valid and remove it from the input
+    teHeader = (EFI_IMAGE_TE_HEADER*) te;
+    te += sizeof(EFI_IMAGE_TE_HEADER);
+    teSize -= sizeof(EFI_IMAGE_TE_HEADER);
+
+    if (teHeader->Signature != EFI_IMAGE_TE_SIGNATURE) {
+        printf("convert64: TE signature not found. Not a TE image, maybe?\n");
+        return ERR_INVALID_IMAGE;
+    }
+
+    // Calculate PE image size
+    peSize = teHeader->StrippedSize + teSize;
+
+    // Start filling DosHeader and PeHeader based on current TE header
+    DosHeader.e_magic = EFI_IMAGE_DOS_SIGNATURE;
+    PePlusHeader.Signature = EFI_IMAGE_PE_SIGNATURE;
+    PePlusHeader.FileHeader.Machine = teHeader->Machine;
+    PePlusHeader.FileHeader.NumberOfSections = teHeader->NumberOfSections;
+    PePlusHeader.FileHeader.SizeOfOptionalHeader = sizeof(EFI_IMAGE_OPTIONAL_HEADER64);
+    PePlusHeader.FileHeader.Characteristics = 0x002E;
+    PePlusHeader.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC;
+    PePlusHeader.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
+    PePlusHeader.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
+    PePlusHeader.OptionalHeader.ImageBase = teHeader->ImageBase;
+    PePlusHeader.OptionalHeader.SectionAlignment = 0x1000;
+    PePlusHeader.OptionalHeader.FileAlignment = 0x1000;
+    PePlusHeader.OptionalHeader.SizeOfImage = peSize;
+    PePlusHeader.OptionalHeader.Subsystem = teHeader->Subsystem;
+    PePlusHeader.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
+    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
+    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = teHeader->DataDirectory[0].Size;
+    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress = teHeader->DataDirectory[1].VirtualAddress;
+    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].Size = teHeader->DataDirectory[1].Size;
+    // Not filled are e_lfanew, SizeOfHeaders, SizeOfCode, SizeOfInitData, SizeOfUninitData
+
+    // Parse sections to determine unfilled elements
+    sectionHeader = (EFI_IMAGE_SECTION_HEADER*)(teHeader + 1);
+    // Fill size of headers based on the first section offset
+    PePlusHeader.OptionalHeader.SizeOfHeaders = sectionHeader->PointerToRawData;
+
+    for (i = 0; i < teHeader->NumberOfSections; i++, sectionHeader++) {
+        // Try code section
+        if (!strncmp(sectionHeader->Name, ".text", sizeof(sectionHeader->Name))) {
+            // Check code section sanity
+            if (sectionHeader->PointerToRawData != teHeader->BaseOfCode) {
+                printf("convert64: .text->PointerToRawData (%08Xh) != BaseOfCode (%08Xh). Invalid TE image?\n", sectionHeader->PointerToRawData, teHeader->BaseOfCode);
+                return ERR_INVALID_IMAGE;
+            }
+
+            PePlusHeader.OptionalHeader.SizeOfCode = sectionHeader->SizeOfRawData;
+        }
+        // Try initialized data section
+        else if (!strncmp(sectionHeader->Name, ".data", sizeof(sectionHeader->Name))) {
+            PePlusHeader.OptionalHeader.SizeOfInitializedData = sectionHeader->SizeOfRawData;
+        }
+        // Try uninitialized data section
+        else if (!strncmp(sectionHeader->Name, ".rdata", sizeof(sectionHeader->Name))) {
+            PePlusHeader.OptionalHeader.SizeOfUninitializedData = sectionHeader->SizeOfRawData;
+        }
+        // Try relocation section
+        else if (!strncmp(sectionHeader->Name, ".reloc", sizeof(sectionHeader->Name))) {
+            //TODO: add more sanity checks in case of incorrect images
+        }
+        else {
+            UINT8 name[sizeof(sectionHeader->Name) + 1];
+            name[sizeof(sectionHeader->Name)] = 0; // Ensure trailing zero
+            memcpy(name, sectionHeader->Name, sizeof(sectionHeader->Name));
+            printf("convert64: unknown section \"%s\" found in TE image\n", name);
+        }
+    }
+
+    // Calculate e_lfanew
+    DosHeader.e_lfanew = teHeader->StrippedSize - sizeof(EFI_IMAGE_NT_HEADERS64);
+
+    // Allocate buffer for PE image
+    pe = (UINT8*)malloc(peSize);
+    if (!pe) {
+        printf("convert64: failed to allocate enough memory for PE image\n");
+        return ERR_OUT_OF_MEMORY;
+    }
+    // Zero allocated memory
+    memset(pe, 0, peSize);
+
+    // Copy filled data into newly allocated buffer
+    memcpy(pe, &DosHeader, sizeof(EFI_IMAGE_DOS_HEADER));
+    memcpy(pe + DosHeader.e_lfanew, &PePlusHeader, sizeof(EFI_IMAGE_NT_HEADERS64));
+    memcpy(pe + teHeader->StrippedSize, te, teSize);
+
+    // Fill output parameters
+    *peOut = pe;
+    *peOutSize = peSize;
+
+    return ERR_SUCCESS;
+}
+
+// Convert function
+UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
+{
+    EFI_IMAGE_TE_HEADER* teHeader;
+
+    // Check arguments for sanity
+    if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || !peOutSize) {
+        printf("convert: called with invalid parameter\n");
+        return ERR_INVALID_PARAMETER;
+    }
+    
+    // Check TE header to be valid and remove it from the input
+    teHeader = (EFI_IMAGE_TE_HEADER*) te;
+
+    if (teHeader->Signature != EFI_IMAGE_TE_SIGNATURE) {
+        printf("convert: TE signature not found. Not a TE image, maybe?\n");
+        return ERR_INVALID_IMAGE;
+    }
+
+    switch(teHeader->Machine)
+    {
+        case IMAGE_FILE_MACHINE_I386:
+        //add more 32-bit machines here
+            return convert32(te, teSize, peOut, peOutSize);
+        case IMAGE_FILE_MACHINE_ARM64:
+        //add more 64-bit machines here
+            return convert64(te, teSize, peOut, peOutSize);
+        default:
+            printf("convert: unsupported Machine %04X\n", teHeader->Machine);
+            return ERR_INVALID_IMAGE;
+    }
 }
 
 // Main
@@ -320,7 +512,7 @@ int main(int argc, char* argv[])
     // Check arguments count
     if (argc != 3) {
         // Print usage and exit
-        printf("TE2PE v0.1.1 - converts Terse Executable image into PE32 image\n\n"
+        printf("TE2PE v0.1.2 - converts Terse Executable image into PE32(+) image\n\n"
                "Usage: TE2PE te.bin pe.bin\n");
         return ERR_INVALID_PARAMETER;
     }
