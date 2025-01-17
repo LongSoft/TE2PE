@@ -1,6 +1,9 @@
-// Converts Terse Executable (TE) image to PE32(+) image
+// Converts Terse Executable (TE) image to PE32 image
 // Author: Nikolaj Schlej aka CodeRush
 // License: WTFPL2 (http://wtfpl2.com/)
+
+// I don't know any machine with 64-bit PEI, so only 32-bit images are supported right now
+// If you've found 64-bit TE file, please open the issue on project's GitHub repo
 
 #include <stdio.h>
 #include <stdint.h>
@@ -17,12 +20,46 @@
 #define UINTN  unsigned int
 #define VOID   void
 
-#define IMAGE_FILE_MACHINE_I386     0x014c
-#define IMAGE_FILE_MACHINE_ARM64    0xAA64
+// Only I386 images are supported now
+#define IMAGE_FILE_MACHINE_UNKNOWN   0
+#define IMAGE_FILE_MACHINE_I386      0x014c
+#define IMAGE_FILE_MACHINE_IA64      0x0200
+#define IMAGE_FILE_MACHINE_AMD64     0x8664
+#define IMAGE_FILE_MACHINE_ARM       0x01c0
+#define IMAGE_FILE_MACHINE_THUMB     0x01c2
+#define IMAGE_FILE_MACHINE_ARMV7     0x01c4
+#define IMAGE_FILE_MACHINE_ARM64     0xAA64
+#define IMAGE_FILE_MACHINE_POWERPC   0x01F0
+#define IMAGE_FILE_MACHINE_POWERPCFP 0x01f1
 
 #define EFI_IMAGE_DOS_SIGNATURE     0x5A4D     // MZ
 #define EFI_IMAGE_PE_SIGNATURE      0x00004550 // PE
 #define EFI_IMAGE_TE_SIGNATURE      0x5A56     // VZ
+
+#define EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC 0x10b
+#define EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC 0x20b
+
+#if defined(__ppc__) || defined(__ppc64__) || defined(_M_PPC) || defined(_M_MPPC)
+#ifndef SWAP16
+#define SWAP16(V) ((UINT16)(((V) & 0xFF) << 8) | (((V) & 0xFF00) >> 8))
+#define XSWAP16(V) (V)
+#endif /* SWAP16 */
+
+#ifndef SWAP32
+#define SWAP32(V) (V)
+#define XSWAP32(V) ((((UINT32)(V) & 0xff) << 24) | (((UINT32)(V) & 0xff00) << 8) | (((UINT32)(V) & 0xff0000) >> 8) |  (((UINT32)(V) & 0xff000000) >> 24))
+#endif /* SWAP32 */
+#else /* !__ppc__ && !__ppc64__ && !_M_PPC && !_M_MPPC */
+#ifndef SWAP16
+#define SWAP16(V) (V)
+#define XSWAP16(V) ((UINT16)(((V) & 0xFF) << 8) | (((V) & 0xFF00) >> 8))
+#endif /* SWAP16 */
+
+#ifndef SWAP32
+#define XSWAP32(V) (V)
+#define SWAP32(V) ((((UINT32)(V) & 0xff) << 24) | (((UINT32)(V) & 0xff00) << 8) | (((UINT32)(V) & 0xff0000) >> 8) |  (((UINT32)(V) & 0xff000000) >> 24))
+#endif /* SWAP32 */
+#endif /* __ppc__ || __ppc64__ || _M_PPC || _M_MPPC */
 
 // DOS header
 typedef struct _EFI_IMAGE_DOS_HEADER {
@@ -132,61 +169,65 @@ typedef struct _EFI_IMAGE_OPTIONAL_HEADER32{
     EFI_IMAGE_DATA_DIRECTORY  DataDirectory[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES];
 } EFI_IMAGE_OPTIONAL_HEADER32;
 
+// Optional Header Standard Fields for PE32+
+typedef struct _EFI_IMAGE_OPTIONAL_HEADER64 {
+    //
+    // Standard fields.
+    //
+    UINT16                    Magic;
+    UINT8                     MajorLinkerVersion;
+    UINT8                     MinorLinkerVersion;
+    UINT32                    SizeOfCode;
+    UINT32                    SizeOfInitializedData;
+    UINT32                    SizeOfUninitializedData;
+    UINT32                    AddressOfEntryPoint;
+    UINT32                    BaseOfCode;
+    
+    //
+    // Optional Header Windows-Specific Fields.
+    //
+    UINT64                    ImageBase;
+    UINT32                    SectionAlignment;
+    UINT32                    FileAlignment;
+    UINT16                    MajorOperatingSystemVersion;
+    UINT16                    MinorOperatingSystemVersion;
+    UINT16                    MajorImageVersion;
+    UINT16                    MinorImageVersion;
+    UINT16                    MajorSubsystemVersion;
+    UINT16                    MinorSubsystemVersion;
+    UINT32                    Win32VersionValue;
+    UINT32                    SizeOfImage;
+    UINT32                    SizeOfHeaders;
+    UINT32                    CheckSum;
+    UINT16                    Subsystem;
+    UINT16                    DllCharacteristics;
+    UINT64                    SizeOfStackReserve;
+    UINT64                    SizeOfStackCommit;
+    UINT64                    SizeOfHeapReserve;
+    UINT64                    SizeOfHeapCommit;
+    UINT32                    LoaderFlags;
+    UINT32                    NumberOfRvaAndSizes;
+    EFI_IMAGE_DATA_DIRECTORY  DataDirectory[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES];
+} EFI_IMAGE_OPTIONAL_HEADER64;
+
 // PE32 image header
-typedef struct _EFI_IMAGE_NT_HEADERS32 {
+typedef struct _EFI_IMAGE_PE_HEADER {
     UINT32 Signature;
     EFI_IMAGE_FILE_HEADER FileHeader;
     EFI_IMAGE_OPTIONAL_HEADER32 OptionalHeader;
-} EFI_IMAGE_NT_HEADERS32;
+} EFI_IMAGE_PE_HEADER;
 
-#define EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC 0x20b
+// PE32 image header
+typedef struct _EFI_IMAGE_PEPLUS_HEADER {
+    UINT32 Signature;
+    EFI_IMAGE_FILE_HEADER FileHeader;
+    EFI_IMAGE_OPTIONAL_HEADER32 OptionalHeader;
+} EFI_IMAGE_PEPLUS_HEADER;
 
-typedef struct {
-  //
-  // Standard fields.
-  //
-  UINT16                    Magic;
-  UINT8                     MajorLinkerVersion;
-  UINT8                     MinorLinkerVersion;
-  UINT32                    SizeOfCode;
-  UINT32                    SizeOfInitializedData;
-  UINT32                    SizeOfUninitializedData;
-  UINT32                    AddressOfEntryPoint;
-  UINT32                    BaseOfCode;
-  //
-  // NT additional fields.
-  //
-  UINT64                    ImageBase;
-  UINT32                    SectionAlignment;
-  UINT32                    FileAlignment;
-  UINT16                    MajorOperatingSystemVersion;
-  UINT16                    MinorOperatingSystemVersion;
-  UINT16                    MajorImageVersion;
-  UINT16                    MinorImageVersion;
-  UINT16                    MajorSubsystemVersion;
-  UINT16                    MinorSubsystemVersion;
-  UINT32                    Win32VersionValue;
-  UINT32                    SizeOfImage;
-  UINT32                    SizeOfHeaders;
-  UINT32                    CheckSum;
-  UINT16                    Subsystem;
-  UINT16                    DllCharacteristics;
-  UINT64                    SizeOfStackReserve;
-  UINT64                    SizeOfStackCommit;
-  UINT64                    SizeOfHeapReserve;
-  UINT64                    SizeOfHeapCommit;
-  UINT32                    LoaderFlags;
-  UINT32                    NumberOfRvaAndSizes;
-  EFI_IMAGE_DATA_DIRECTORY  DataDirectory[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES];
-} EFI_IMAGE_OPTIONAL_HEADER64;
-
-//PE32+ image header
-typedef struct {
-  UINT32                      Signature;
-  EFI_IMAGE_FILE_HEADER       FileHeader;
-  EFI_IMAGE_OPTIONAL_HEADER64 OptionalHeader;
-} EFI_IMAGE_NT_HEADERS64;
-
+typedef union _EFI_IMAGE_PE_HEADERS {
+    EFI_IMAGE_PE_HEADER Header32;
+    EFI_IMAGE_PEPLUS_HEADER Header64;
+} EFI_IMAGE_PE_HEADERS;
 
 // Section Table. This table immediately follows the optional header.
 typedef struct _EFI_IMAGE_SECTION_HEADER {
@@ -238,20 +279,19 @@ typedef struct {
 static EFI_IMAGE_DOS_HEADER DosHeader = { 0 };
 
 // PE header
-static EFI_IMAGE_NT_HEADERS32 PeHeader = { 0 };
+static EFI_IMAGE_PE_HEADERS PeHeader = { 0 };
 
-// PE32+ header
-static EFI_IMAGE_NT_HEADERS64 PePlusHeader = { 0 };
-
-//32bit convert
-UINT8 convert32(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
+// Convert function
+UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
 {
     UINTN  i;
     UINT8* pe;
     UINTN  peSize;
     EFI_IMAGE_TE_HEADER* teHeader;
     EFI_IMAGE_SECTION_HEADER* sectionHeader;
-    int is64 = 0;
+    UINT32 SectionsCount = 0;
+    UINT32 ConvSize = 0;
+    unsigned char Is64Bit = 0;
 
     // Check arguments for sanity
     if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || !peOutSize) {
@@ -270,57 +310,168 @@ UINT8 convert32(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     }
 
     // Calculate PE image size
-    peSize = teHeader->StrippedSize + teSize;
+    if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+    {
+        peSize = SWAP32(teHeader->StrippedSize) + teSize;
+    } else {
+        peSize = teHeader->StrippedSize + teSize;
+    }
 
     // Start filling DosHeader and PeHeader based on current TE header
     DosHeader.e_magic = EFI_IMAGE_DOS_SIGNATURE;
-    PeHeader.Signature = EFI_IMAGE_PE_SIGNATURE;
-    PeHeader.FileHeader.Machine = teHeader->Machine;
-    PeHeader.FileHeader.NumberOfSections = teHeader->NumberOfSections;
-    PeHeader.FileHeader.SizeOfOptionalHeader = sizeof(EFI_IMAGE_OPTIONAL_HEADER32);
-    PeHeader.FileHeader.Characteristics = 0x210E;
-    PeHeader.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC;
-    PeHeader.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
-    PeHeader.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-    PeHeader.OptionalHeader.ImageBase = (UINT32)teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER);
-    PeHeader.OptionalHeader.SectionAlignment = 0x10;
-    PeHeader.OptionalHeader.FileAlignment = 0x10;
-    PeHeader.OptionalHeader.SizeOfImage = peSize;
-    PeHeader.OptionalHeader.Subsystem = teHeader->Subsystem;
-    PeHeader.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
-    PeHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
-    PeHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = teHeader->DataDirectory[0].Size;
-    PeHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress = teHeader->DataDirectory[1].VirtualAddress;
-    PeHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].Size = teHeader->DataDirectory[1].Size;
+    switch (teHeader->Machine)
+    {
+        case IMAGE_FILE_MACHINE_ARM:
+        case IMAGE_FILE_MACHINE_THUMB:
+        case IMAGE_FILE_MACHINE_ARMV7:
+        case IMAGE_FILE_MACHINE_POWERPC:
+        case IMAGE_FILE_MACHINE_POWERPCFP:
+        case IMAGE_FILE_MACHINE_I386:
+            Is64Bit = 0;
+
+            PeHeader.Header32.Signature = EFI_IMAGE_PE_SIGNATURE;
+            PeHeader.Header32.FileHeader.Machine = teHeader->Machine;
+            PeHeader.Header32.FileHeader.NumberOfSections = teHeader->NumberOfSections;
+            PeHeader.Header32.FileHeader.SizeOfOptionalHeader = sizeof(EFI_IMAGE_OPTIONAL_HEADER32);
+            PeHeader.Header32.FileHeader.Characteristics = 0x210E;
+            
+            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+            {
+                PeHeader.Header32.OptionalHeader.Magic = SWAP16(EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC);
+            } else {
+                PeHeader.Header32.OptionalHeader.Magic = XSWAP16(EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC);
+            }
+            PeHeader.Header32.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
+            PeHeader.Header32.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
+            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+            {
+                PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)SWAP32(SWAP32(teHeader->ImageBase) - SWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
+            } else {
+                PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)XSWAP32(XSWAP32(teHeader->ImageBase) - XSWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
+            }
+            PeHeader.Header32.OptionalHeader.SectionAlignment = 0x10;
+            PeHeader.Header32.OptionalHeader.FileAlignment = 0x10;
+            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+            {
+                PeHeader.Header32.OptionalHeader.SizeOfImage = SWAP32(peSize);
+            } else {
+                PeHeader.Header32.OptionalHeader.SizeOfImage = XSWAP32(peSize);
+            }
+            PeHeader.Header32.OptionalHeader.Subsystem = teHeader->Subsystem;
+            PeHeader.Header32.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
+            PeHeader.Header32.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
+            PeHeader.Header32.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = teHeader->DataDirectory[0].Size;
+            PeHeader.Header32.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress = teHeader->DataDirectory[1].VirtualAddress;
+            PeHeader.Header32.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].Size = teHeader->DataDirectory[1].Size;
+            break;
+
+        case IMAGE_FILE_MACHINE_AMD64:
+        case IMAGE_FILE_MACHINE_IA64:
+        case IMAGE_FILE_MACHINE_ARM64:
+            Is64Bit = 1;
+
+            PeHeader.Header64.Signature = EFI_IMAGE_PE_SIGNATURE;
+            PeHeader.Header64.FileHeader.Machine = teHeader->Machine;
+            PeHeader.Header64.FileHeader.NumberOfSections = teHeader->NumberOfSections;
+            PeHeader.Header64.FileHeader.SizeOfOptionalHeader = sizeof(EFI_IMAGE_OPTIONAL_HEADER64);
+            PeHeader.Header64.FileHeader.Characteristics = 0x210E;
+
+            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+            {
+                PeHeader.Header64.OptionalHeader.Magic = SWAP16(EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC);
+            } else {
+                PeHeader.Header64.OptionalHeader.Magic = XSWAP16(EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC);
+            }
+            PeHeader.Header64.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
+            PeHeader.Header64.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
+            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+            {
+                PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)SWAP32(SWAP32(teHeader->ImageBase) - SWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
+            } else {
+                PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)XSWAP32(XSWAP32(teHeader->ImageBase) - XSWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
+            }
+            PeHeader.Header64.OptionalHeader.SectionAlignment = 0x10;
+            PeHeader.Header64.OptionalHeader.FileAlignment = 0x10;
+            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+            {
+                PeHeader.Header64.OptionalHeader.SizeOfImage = SWAP32(peSize);
+            } else {
+                PeHeader.Header64.OptionalHeader.SizeOfImage = XSWAP32(peSize);
+            }
+            PeHeader.Header64.OptionalHeader.Subsystem = teHeader->Subsystem;
+            PeHeader.Header64.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
+            PeHeader.Header64.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
+            PeHeader.Header64.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = teHeader->DataDirectory[0].Size;
+            PeHeader.Header64.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress = teHeader->DataDirectory[1].VirtualAddress;
+            PeHeader.Header64.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].Size = teHeader->DataDirectory[1].Size;
+            break;
+
+        default:
+            printf("ERROR: Invalid PE Optional Header Magic\n");
+            return ERR_INVALID_IMAGE;
+    }
+    
     // Not filled are e_lfanew, SizeOfHeaders, SizeOfCode, SizeOfInitData, SizeOfUninitData, BaseOfData
 
     // Parse sections to determine unfilled elements
     sectionHeader = (EFI_IMAGE_SECTION_HEADER*)(teHeader + 1);
     // Fill size of headers based on the first section offset
-    PeHeader.OptionalHeader.SizeOfHeaders = sectionHeader->PointerToRawData;
+    if (Is64Bit)
+    {
+        PeHeader.Header64.OptionalHeader.SizeOfHeaders = sectionHeader->PointerToRawData;
+    } else {
+        PeHeader.Header32.OptionalHeader.SizeOfHeaders = sectionHeader->PointerToRawData;
+    }
 
-    for (i = 0; i < teHeader->NumberOfSections; i++, sectionHeader++) {
+    if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+    {
+        SectionsCount = SWAP32(teHeader->NumberOfSections);
+    } else {
+        SectionsCount = XSWAP32(teHeader->NumberOfSections);
+    }
+
+    for (i = 0; i < SectionsCount; i++, sectionHeader++)
+    {
         // Try code section
-        if (!strncmp(sectionHeader->Name, ".text", sizeof(sectionHeader->Name))) {
+        if (!strncmp((char *)sectionHeader->Name, ".text", sizeof(sectionHeader->Name))) {
             // Check code section sanity
             if (sectionHeader->PointerToRawData != teHeader->BaseOfCode) {
                 printf("convert: .text->PointerToRawData (%08Xh) != BaseOfCode (%08Xh). Invalid TE image?\n", sectionHeader->PointerToRawData, teHeader->BaseOfCode);
                 return ERR_INVALID_IMAGE;
             }
 
-            PeHeader.OptionalHeader.SizeOfCode = sectionHeader->SizeOfRawData;
+            if (Is64Bit)
+            {
+                PeHeader.Header64.OptionalHeader.SizeOfCode = sectionHeader->SizeOfRawData;
+            } else {
+                PeHeader.Header32.OptionalHeader.SizeOfCode = sectionHeader->SizeOfRawData;
+            }
         }
         // Try initialized data section
-        else if (!strncmp(sectionHeader->Name, ".data", sizeof(sectionHeader->Name))) {
-            PeHeader.OptionalHeader.BaseOfData = sectionHeader->PointerToRawData;
-            PeHeader.OptionalHeader.SizeOfInitializedData = sectionHeader->SizeOfRawData;
+        else if (!strncmp((char *)sectionHeader->Name, ".data", sizeof(sectionHeader->Name))) {
+            if (Is64Bit == 0)
+            {
+                PeHeader.Header32.OptionalHeader.BaseOfData = sectionHeader->PointerToRawData;
+                PeHeader.Header32.OptionalHeader.SizeOfInitializedData = sectionHeader->SizeOfRawData;
+            } else {
+                PeHeader.Header64.OptionalHeader.SizeOfInitializedData = sectionHeader->SizeOfRawData;
+            }
         }
         // Try uninitialized data section
-        else if (!strncmp(sectionHeader->Name, ".rdata", sizeof(sectionHeader->Name))) {
-            PeHeader.OptionalHeader.SizeOfUninitializedData = sectionHeader->SizeOfRawData;
+        else if (!strncmp((char *)sectionHeader->Name, ".rdata", sizeof(sectionHeader->Name))) {
+            if (Is64Bit)
+            {
+                PeHeader.Header64.OptionalHeader.SizeOfUninitializedData = sectionHeader->SizeOfRawData;
+            } else {
+                PeHeader.Header32.OptionalHeader.SizeOfUninitializedData = sectionHeader->SizeOfRawData;
+            }
         }
         // Try relocation section
-        else if (!strncmp(sectionHeader->Name, ".reloc", sizeof(sectionHeader->Name))) {
+        else if (!strncmp((char *)sectionHeader->Name, ".reloc", sizeof(sectionHeader->Name))) {
+            //TODO: add more sanity checks in case of incorrect images
+        }
+        // Try relocation section
+        else if (!strncmp((char *)sectionHeader->Name, ".debug", sizeof(sectionHeader->Name))) {
             //TODO: add more sanity checks in case of incorrect images
         }
         else {
@@ -332,7 +483,22 @@ UINT8 convert32(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     }
 
     // Calculate e_lfanew
-    DosHeader.e_lfanew = teHeader->StrippedSize - sizeof(EFI_IMAGE_NT_HEADERS32);
+    if (Is64Bit)
+    {
+        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+        {
+            DosHeader.e_lfanew = SWAP32(SWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PEPLUS_HEADER));
+        } else {
+            DosHeader.e_lfanew = XSWAP32(XSWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PEPLUS_HEADER));
+        }
+    } else {
+        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+        {
+            DosHeader.e_lfanew = SWAP32(SWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PE_HEADER));
+        } else {
+            DosHeader.e_lfanew = XSWAP32(XSWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PE_HEADER));
+        }
+    }
 
     // Allocate buffer for PE image
     pe = (UINT8*)malloc(peSize);
@@ -345,157 +511,43 @@ UINT8 convert32(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
 
     // Copy filled data into newly allocated buffer
     memcpy(pe, &DosHeader, sizeof(EFI_IMAGE_DOS_HEADER));
-    memcpy(pe + DosHeader.e_lfanew, &PeHeader, sizeof(EFI_IMAGE_NT_HEADERS32));
-    memcpy(pe + teHeader->StrippedSize, te, teSize);
 
-    // Fill output parameters
-    *peOut = pe;
-    *peOutSize = peSize;
-
-    return ERR_SUCCESS;
-}
-
-//64bit convert
-UINT8 convert64(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
-{
-    UINTN  i;
-    UINT8* pe;
-    UINTN  peSize;
-    EFI_IMAGE_TE_HEADER* teHeader;
-    EFI_IMAGE_SECTION_HEADER* sectionHeader;
-
-    // Check arguments for sanity
-    if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || !peOutSize) {
-        printf("convert64: called with invalid parameter\n");
-        return ERR_INVALID_PARAMETER;
-    }
-    
-    // Check TE header to be valid and remove it from the input
-    teHeader = (EFI_IMAGE_TE_HEADER*) te;
-    te += sizeof(EFI_IMAGE_TE_HEADER);
-    teSize -= sizeof(EFI_IMAGE_TE_HEADER);
-
-    if (teHeader->Signature != EFI_IMAGE_TE_SIGNATURE) {
-        printf("convert64: TE signature not found. Not a TE image, maybe?\n");
-        return ERR_INVALID_IMAGE;
-    }
-
-    // Calculate PE image size
-    peSize = teHeader->StrippedSize + teSize;
-
-    // Start filling DosHeader and PeHeader based on current TE header
-    DosHeader.e_magic = EFI_IMAGE_DOS_SIGNATURE;
-    PePlusHeader.Signature = EFI_IMAGE_PE_SIGNATURE;
-    PePlusHeader.FileHeader.Machine = teHeader->Machine;
-    PePlusHeader.FileHeader.NumberOfSections = teHeader->NumberOfSections;
-    PePlusHeader.FileHeader.SizeOfOptionalHeader = sizeof(EFI_IMAGE_OPTIONAL_HEADER64);
-    PePlusHeader.FileHeader.Characteristics = 0x002E;
-    PePlusHeader.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC;
-    PePlusHeader.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
-    PePlusHeader.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-    PePlusHeader.OptionalHeader.ImageBase = teHeader->ImageBase;
-    PePlusHeader.OptionalHeader.SectionAlignment = 0x1000;
-    PePlusHeader.OptionalHeader.FileAlignment = 0x1000;
-    PePlusHeader.OptionalHeader.SizeOfImage = peSize;
-    PePlusHeader.OptionalHeader.Subsystem = teHeader->Subsystem;
-    PePlusHeader.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
-    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
-    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = teHeader->DataDirectory[0].Size;
-    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress = teHeader->DataDirectory[1].VirtualAddress;
-    PePlusHeader.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_DEBUG].Size = teHeader->DataDirectory[1].Size;
-    // Not filled are e_lfanew, SizeOfHeaders, SizeOfCode, SizeOfInitData, SizeOfUninitData
-
-    // Parse sections to determine unfilled elements
-    sectionHeader = (EFI_IMAGE_SECTION_HEADER*)(teHeader + 1);
-    // Fill size of headers based on the first section offset
-    PePlusHeader.OptionalHeader.SizeOfHeaders = sectionHeader->PointerToRawData;
-
-    for (i = 0; i < teHeader->NumberOfSections; i++, sectionHeader++) {
-        // Try code section
-        if (!strncmp(sectionHeader->Name, ".text", sizeof(sectionHeader->Name))) {
-            // Check code section sanity
-            if (sectionHeader->PointerToRawData != teHeader->BaseOfCode) {
-                printf("convert64: .text->PointerToRawData (%08Xh) != BaseOfCode (%08Xh). Invalid TE image?\n", sectionHeader->PointerToRawData, teHeader->BaseOfCode);
-                return ERR_INVALID_IMAGE;
-            }
-
-            PePlusHeader.OptionalHeader.SizeOfCode = sectionHeader->SizeOfRawData;
-        }
-        // Try initialized data section
-        else if (!strncmp(sectionHeader->Name, ".data", sizeof(sectionHeader->Name))) {
-            PePlusHeader.OptionalHeader.SizeOfInitializedData = sectionHeader->SizeOfRawData;
-        }
-        // Try uninitialized data section
-        else if (!strncmp(sectionHeader->Name, ".rdata", sizeof(sectionHeader->Name))) {
-            PePlusHeader.OptionalHeader.SizeOfUninitializedData = sectionHeader->SizeOfRawData;
-        }
-        // Try relocation section
-        else if (!strncmp(sectionHeader->Name, ".reloc", sizeof(sectionHeader->Name))) {
-            //TODO: add more sanity checks in case of incorrect images
-        }
-        else {
-            UINT8 name[sizeof(sectionHeader->Name) + 1];
-            name[sizeof(sectionHeader->Name)] = 0; // Ensure trailing zero
-            memcpy(name, sectionHeader->Name, sizeof(sectionHeader->Name));
-            printf("convert64: unknown section \"%s\" found in TE image\n", name);
-        }
-    }
-
-    // Calculate e_lfanew
-    DosHeader.e_lfanew = teHeader->StrippedSize - sizeof(EFI_IMAGE_NT_HEADERS64);
-
-    // Allocate buffer for PE image
-    pe = (UINT8*)malloc(peSize);
-    if (!pe) {
-        printf("convert64: failed to allocate enough memory for PE image\n");
-        return ERR_OUT_OF_MEMORY;
-    }
-    // Zero allocated memory
-    memset(pe, 0, peSize);
-
-    // Copy filled data into newly allocated buffer
-    memcpy(pe, &DosHeader, sizeof(EFI_IMAGE_DOS_HEADER));
-    memcpy(pe + DosHeader.e_lfanew, &PePlusHeader, sizeof(EFI_IMAGE_NT_HEADERS64));
-    memcpy(pe + teHeader->StrippedSize, te, teSize);
-
-    // Fill output parameters
-    *peOut = pe;
-    *peOutSize = peSize;
-
-    return ERR_SUCCESS;
-}
-
-// Convert function
-UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
-{
-    EFI_IMAGE_TE_HEADER* teHeader;
-
-    // Check arguments for sanity
-    if (!te || teSize <= sizeof(EFI_IMAGE_TE_HEADER) || !peOut || !peOutSize) {
-        printf("convert: called with invalid parameter\n");
-        return ERR_INVALID_PARAMETER;
-    }
-    
-    // Check TE header to be valid and remove it from the input
-    teHeader = (EFI_IMAGE_TE_HEADER*) te;
-
-    if (teHeader->Signature != EFI_IMAGE_TE_SIGNATURE) {
-        printf("convert: TE signature not found. Not a TE image, maybe?\n");
-        return ERR_INVALID_IMAGE;
-    }
-
-    switch(teHeader->Machine)
+    if (Is64Bit)
     {
-        case IMAGE_FILE_MACHINE_I386:
-        //add more 32-bit machines here
-            return convert32(te, teSize, peOut, peOutSize);
-        case IMAGE_FILE_MACHINE_ARM64:
-        //add more 64-bit machines here
-            return convert64(te, teSize, peOut, peOutSize);
-        default:
-            printf("convert: unsupported Machine %04X\n", teHeader->Machine);
-            return ERR_INVALID_IMAGE;
+        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+        {
+            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PEPLUS_HEADER); ++ConvSize)
+            {
+                memset(&(PeHeader.Header64) + ConvSize, *(pe + SWAP32(DosHeader.e_lfanew)), 1);
+            }
+        } else {
+            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PEPLUS_HEADER); ++ConvSize)
+            {
+                memset(&(PeHeader.Header64) + ConvSize, *(pe + XSWAP32(DosHeader.e_lfanew)), 1);
+            }
+        }
+    } else {
+        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+        {
+            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PE_HEADER); ++ConvSize)
+            {
+                memset(&(PeHeader.Header32) + ConvSize, *(pe + SWAP32(DosHeader.e_lfanew)), 1);
+            }
+        } else {
+            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PE_HEADER); ++ConvSize)
+            {
+                memset(&(PeHeader.Header32) + ConvSize, *(pe + XSWAP32(DosHeader.e_lfanew)), 1);
+            }
+        }
     }
+
+    memcpy(pe + teHeader->StrippedSize, te, teSize);
+
+    // Fill output parameters
+    *peOut = pe;
+    *peOutSize = peSize;
+
+    return ERR_SUCCESS;
 }
 
 // Main
@@ -512,7 +564,7 @@ int main(int argc, char* argv[])
     // Check arguments count
     if (argc != 3) {
         // Print usage and exit
-        printf("TE2PE v0.1.2 - converts Terse Executable image into PE32(+) image\n\n"
+        printf("TE2PE v0.1.1 - converts Terse Executable image into PE32 image\n\n"
                "Usage: TE2PE te.bin pe.bin\n");
         return ERR_INVALID_PARAMETER;
     }
