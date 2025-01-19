@@ -29,8 +29,6 @@
 #define IMAGE_FILE_MACHINE_THUMB     0x01c2
 #define IMAGE_FILE_MACHINE_ARMV7     0x01c4
 #define IMAGE_FILE_MACHINE_ARM64     0xAA64
-#define IMAGE_FILE_MACHINE_POWERPC   0x01F0
-#define IMAGE_FILE_MACHINE_POWERPCFP 0x01f1
 
 #define EFI_IMAGE_DOS_SIGNATURE     0x5A4D     // MZ
 #define EFI_IMAGE_PE_SIGNATURE      0x00004550 // PE
@@ -38,28 +36,6 @@
 
 #define EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC 0x10b
 #define EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC 0x20b
-
-#if defined(__ppc__) || defined(__ppc64__) || defined(_M_PPC) || defined(_M_MPPC)
-#ifndef SWAP16
-#define SWAP16(V) ((UINT16)(((V) & 0xFF) << 8) | (((V) & 0xFF00) >> 8))
-#define XSWAP16(V) (V)
-#endif /* SWAP16 */
-
-#ifndef SWAP32
-#define SWAP32(V) (V)
-#define XSWAP32(V) ((((UINT32)(V) & 0xff) << 24) | (((UINT32)(V) & 0xff00) << 8) | (((UINT32)(V) & 0xff0000) >> 8) |  (((UINT32)(V) & 0xff000000) >> 24))
-#endif /* SWAP32 */
-#else /* !__ppc__ && !__ppc64__ && !_M_PPC && !_M_MPPC */
-#ifndef SWAP16
-#define SWAP16(V) (V)
-#define XSWAP16(V) ((UINT16)(((V) & 0xFF) << 8) | (((V) & 0xFF00) >> 8))
-#endif /* SWAP16 */
-
-#ifndef SWAP32
-#define XSWAP32(V) (V)
-#define SWAP32(V) ((((UINT32)(V) & 0xff) << 24) | (((UINT32)(V) & 0xff00) << 8) | (((UINT32)(V) & 0xff0000) >> 8) |  (((UINT32)(V) & 0xff000000) >> 24))
-#endif /* SWAP32 */
-#endif /* __ppc__ || __ppc64__ || _M_PPC || _M_MPPC */
 
 // DOS header
 typedef struct _EFI_IMAGE_DOS_HEADER {
@@ -310,12 +286,7 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     }
 
     // Calculate PE image size
-    if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-    {
-        peSize = SWAP32(teHeader->StrippedSize) + teSize;
-    } else {
-        peSize = teHeader->StrippedSize + teSize;
-    }
+    peSize = teHeader->StrippedSize + teSize;
 
     // Start filling DosHeader and PeHeader based on current TE header
     DosHeader.e_magic = EFI_IMAGE_DOS_SIGNATURE;
@@ -324,8 +295,6 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
         case IMAGE_FILE_MACHINE_ARM:
         case IMAGE_FILE_MACHINE_THUMB:
         case IMAGE_FILE_MACHINE_ARMV7:
-        case IMAGE_FILE_MACHINE_POWERPC:
-        case IMAGE_FILE_MACHINE_POWERPCFP:
         case IMAGE_FILE_MACHINE_I386:
             Is64Bit = 0;
 
@@ -334,29 +303,13 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
             PeHeader.Header32.FileHeader.NumberOfSections = teHeader->NumberOfSections;
             PeHeader.Header32.FileHeader.SizeOfOptionalHeader = sizeof(EFI_IMAGE_OPTIONAL_HEADER32);
             PeHeader.Header32.FileHeader.Characteristics = 0x210E;
-            
-            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-            {
-                PeHeader.Header32.OptionalHeader.Magic = SWAP16(EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC);
-            } else {
-                PeHeader.Header32.OptionalHeader.Magic = XSWAP16(EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC);
-            }
+            PeHeader.Header32.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC;
             PeHeader.Header32.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
             PeHeader.Header32.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-            {
-                PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)SWAP32(SWAP32(teHeader->ImageBase) - SWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
-            } else {
-                PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)XSWAP32(XSWAP32(teHeader->ImageBase) - XSWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
-            }
+            PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER));
             PeHeader.Header32.OptionalHeader.SectionAlignment = 0x10;
             PeHeader.Header32.OptionalHeader.FileAlignment = 0x10;
-            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-            {
-                PeHeader.Header32.OptionalHeader.SizeOfImage = SWAP32(peSize);
-            } else {
-                PeHeader.Header32.OptionalHeader.SizeOfImage = XSWAP32(peSize);
-            }
+            PeHeader.Header32.OptionalHeader.SizeOfImage = peSize;
             PeHeader.Header32.OptionalHeader.Subsystem = teHeader->Subsystem;
             PeHeader.Header32.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
             PeHeader.Header32.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
@@ -375,29 +328,13 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
             PeHeader.Header64.FileHeader.NumberOfSections = teHeader->NumberOfSections;
             PeHeader.Header64.FileHeader.SizeOfOptionalHeader = sizeof(EFI_IMAGE_OPTIONAL_HEADER64);
             PeHeader.Header64.FileHeader.Characteristics = 0x210E;
-
-            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-            {
-                PeHeader.Header64.OptionalHeader.Magic = SWAP16(EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC);
-            } else {
-                PeHeader.Header64.OptionalHeader.Magic = XSWAP16(EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC);
-            }
+            PeHeader.Header64.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC;
             PeHeader.Header64.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
             PeHeader.Header64.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-            {
-                PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)SWAP32(SWAP32(teHeader->ImageBase) - SWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
-            } else {
-                PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)XSWAP32(XSWAP32(teHeader->ImageBase) - XSWAP32(teHeader->StrippedSize) + sizeof(EFI_IMAGE_TE_HEADER));
-            }
+            PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER));
             PeHeader.Header64.OptionalHeader.SectionAlignment = 0x10;
             PeHeader.Header64.OptionalHeader.FileAlignment = 0x10;
-            if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-            {
-                PeHeader.Header64.OptionalHeader.SizeOfImage = SWAP32(peSize);
-            } else {
-                PeHeader.Header64.OptionalHeader.SizeOfImage = XSWAP32(peSize);
-            }
+            PeHeader.Header64.OptionalHeader.SizeOfImage = peSize;
             PeHeader.Header64.OptionalHeader.Subsystem = teHeader->Subsystem;
             PeHeader.Header64.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
             PeHeader.Header64.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
@@ -423,13 +360,7 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
         PeHeader.Header32.OptionalHeader.SizeOfHeaders = sectionHeader->PointerToRawData;
     }
 
-    if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-    {
-        SectionsCount = SWAP32(teHeader->NumberOfSections);
-    } else {
-        SectionsCount = XSWAP32(teHeader->NumberOfSections);
-    }
-
+    SectionsCount = teHeader->NumberOfSections;
     for (i = 0; i < SectionsCount; i++, sectionHeader++)
     {
         // Try code section
@@ -485,19 +416,9 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     // Calculate e_lfanew
     if (Is64Bit)
     {
-        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-        {
-            DosHeader.e_lfanew = SWAP32(SWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PEPLUS_HEADER));
-        } else {
-            DosHeader.e_lfanew = XSWAP32(XSWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PEPLUS_HEADER));
-        }
+        DosHeader.e_lfanew = teHeader->StrippedSize - sizeof(EFI_IMAGE_PEPLUS_HEADER);
     } else {
-        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
-        {
-            DosHeader.e_lfanew = SWAP32(SWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PE_HEADER));
-        } else {
-            DosHeader.e_lfanew = XSWAP32(XSWAP32(teHeader->StrippedSize) - sizeof(EFI_IMAGE_PE_HEADER));
-        }
+        DosHeader.e_lfanew = teHeader->StrippedSize - sizeof(EFI_IMAGE_PE_HEADER);
     }
 
     // Allocate buffer for PE image
@@ -514,30 +435,14 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
 
     if (Is64Bit)
     {
-        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+        for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PEPLUS_HEADER); ++ConvSize)
         {
-            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PEPLUS_HEADER); ++ConvSize)
-            {
-                memset(&(PeHeader.Header64) + ConvSize, *(pe + SWAP32(DosHeader.e_lfanew)), 1);
-            }
-        } else {
-            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PEPLUS_HEADER); ++ConvSize)
-            {
-                memset(&(PeHeader.Header64) + ConvSize, *(pe + XSWAP32(DosHeader.e_lfanew)), 1);
-            }
+            memset(&(PeHeader.Header64) + ConvSize, *(pe + DosHeader.e_lfanew), 1);
         }
     } else {
-        if ((teHeader->Machine == IMAGE_FILE_MACHINE_POWERPC) || (teHeader->Machine == IMAGE_FILE_MACHINE_POWERPCFP))
+        for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PE_HEADER); ++ConvSize)
         {
-            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PE_HEADER); ++ConvSize)
-            {
-                memset(&(PeHeader.Header32) + ConvSize, *(pe + SWAP32(DosHeader.e_lfanew)), 1);
-            }
-        } else {
-            for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PE_HEADER); ++ConvSize)
-            {
-                memset(&(PeHeader.Header32) + ConvSize, *(pe + XSWAP32(DosHeader.e_lfanew)), 1);
-            }
+                memset(&(PeHeader.Header32) + ConvSize, *(pe + DosHeader.e_lfanew), 1);
         }
     }
 
