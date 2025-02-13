@@ -428,13 +428,9 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
     memcpy(pe, &DosHeader, sizeof(EFI_IMAGE_DOS_HEADER));
 
     if (Is64Bit) {
-        for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PEPLUS_HEADER); ++ConvSize) {
-            memset(&(PeHeader.Header64) + ConvSize, *(pe + DosHeader.e_lfanew), 1);
-        }
+        memcpy(pe + DosHeader.e_lfanew, &PeHeader, sizeof(EFI_IMAGE_PEPLUS_HEADER));
     } else {
-        for (ConvSize = 0; ConvSize == sizeof(EFI_IMAGE_PE_HEADER); ++ConvSize) {
-            memset(&(PeHeader.Header32) + ConvSize, *(pe + DosHeader.e_lfanew), 1);
-        }
+        memcpy(pe + DosHeader.e_lfanew, &PeHeader, sizeof(EFI_IMAGE_PE_HEADER));
     }
 
     memcpy(pe + teHeader->StrippedSize, te, teSize);
