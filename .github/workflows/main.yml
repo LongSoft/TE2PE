@@ -1,0 +1,122 @@
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_mac:
+    name: Build on macOS
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Create build directory
+      run: cmake -E make_directory ${{runner.workspace}}/build
+    - name: Configure everything
+      working-directory: ${{runner.workspace}}/build
+      run: cmake -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0" ../TE2PE/
+    - name: Build everything
+      working-directory: ${{runner.workspace}}/build
+      shell: bash
+      run: cmake --build . --config Release
+    - name: Create dist directory
+      run: cmake -E make_directory ${{runner.workspace}}/dist
+    - name: Archive everything
+      working-directory: ${{runner.workspace}}/build
+      shell: bash
+      run: |
+          zip -qryj ../dist/te2pe_universal_mac.zip ./te2pe
+    - name: Upload to artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: macOS builds
+        path: ${{runner.workspace}}/dist/*.zip
+
+  build_linux:
+    name: Build on Linux
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Create build directory
+      run: cmake -E make_directory ${{runner.workspace}}/build
+    - name: Configure everything
+      working-directory: ${{runner.workspace}}/build
+      run: cmake ../TE2PE/
+    - name: Build everything
+      working-directory: ${{runner.workspace}}/build
+      shell: bash
+      run: cmake --build . --config Release
+    - name: Create dist directory
+      run: cmake -E make_directory ${{runner.workspace}}/dist
+    - name: Archive everything
+      working-directory: ${{runner.workspace}}/build
+      shell: bash
+      run: |
+          zip -qryj ../dist/te2pe_linux.zip ./te2pe
+    - name: Upload to artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Linux builds
+        path: ${{runner.workspace}}/dist/*.zip
+
+  build_freebsd:
+    name: Build on FreeBSD
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build on FreeBSD inside Ubuntu VM
+        id: test
+        uses: cross-platform-actions/action@v0.27.0
+        with:
+          operating_system: freebsd
+          version: '13.3'
+          shell: sh
+          run: |
+            sudo pkg install -y zip cmake
+            mkdir dist
+            mkdir build
+            cd build
+            cmake ..
+            cmake --build . --config Release
+            zip -qryj ../dist/te2pe_freebsd.zip ./te2pe
+      - name: Upload to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeBSD builds
+          path: dist/*.zip
+          
+  build_windows_x86:
+    name: Build on Windows x86
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v3 
+      - name: Create build directory
+        run: cmake -E make_directory ${{runner.workspace}}/build
+      - name: Configure everything
+        shell: bash
+        working-directory: ${{runner.workspace}}/build
+        run: cmake -G "Visual Studio 16 2019" -A Win32 -T "v141_xp" -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded" ../TE2PE/
+      - name: Build everything
+        working-directory: ${{runner.workspace}}/build
+        shell: bash
+        run: cmake --build . --config Release
+      - name: Create dist directory
+        run: cmake -E make_directory ${{runner.workspace}}/dist
+      - name: Archive everything
+        working-directory: ${{runner.workspace}}/build/Release
+        shell: bash
+        run: |
+          7z a ../../dist/te2pe_win32.zip TE2PE.exe
+      - name: Upload to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows x86 builds
+          path: ${{runner.workspace}}\dist\*.zip
