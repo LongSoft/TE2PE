@@ -17,7 +17,7 @@
 #define UINT16 uint16_t
 #define UINT32 uint32_t
 #define UINT64 uint64_t
-#define UINTN  unsigned int
+#define UINTN  unsigned long
 #define VOID   void
 
 // Only I386 images are supported now
@@ -197,7 +197,7 @@ typedef struct _EFI_IMAGE_PE_HEADER {
 typedef struct _EFI_IMAGE_PEPLUS_HEADER {
     UINT32 Signature;
     EFI_IMAGE_FILE_HEADER FileHeader;
-    EFI_IMAGE_OPTIONAL_HEADER32 OptionalHeader;
+    EFI_IMAGE_OPTIONAL_HEADER64 OptionalHeader;
 } EFI_IMAGE_PEPLUS_HEADER;
 
 typedef union _EFI_IMAGE_PE_HEADERS {
@@ -258,7 +258,7 @@ static EFI_IMAGE_DOS_HEADER DosHeader = { 0 };
 static EFI_IMAGE_PE_HEADERS PeHeader = { 0 };
 
 // Convert function
-UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
+UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize, char apply_fixup)
 {
     UINTN  i;
     UINT8* pe;
@@ -305,10 +305,11 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
             PeHeader.Header32.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC;
             PeHeader.Header32.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
             PeHeader.Header32.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-            PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER));
+            if (apply_fixup) PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER));
+            else             PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase);
             PeHeader.Header32.OptionalHeader.SectionAlignment = 0x10;
             PeHeader.Header32.OptionalHeader.FileAlignment = 0x10;
-            PeHeader.Header32.OptionalHeader.SizeOfImage = peSize;
+            PeHeader.Header32.OptionalHeader.SizeOfImage = (UINT32)peSize;
             PeHeader.Header32.OptionalHeader.Subsystem = teHeader->Subsystem;
             PeHeader.Header32.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
             PeHeader.Header32.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
@@ -330,10 +331,11 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
             PeHeader.Header64.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC;
             PeHeader.Header64.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
             PeHeader.Header64.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-            PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER));
+            if (apply_fixup) PeHeader.Header64.OptionalHeader.ImageBase = teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER);
+            else             PeHeader.Header64.OptionalHeader.ImageBase = teHeader->ImageBase;
             PeHeader.Header64.OptionalHeader.SectionAlignment = 0x10;
             PeHeader.Header64.OptionalHeader.FileAlignment = 0x10;
-            PeHeader.Header64.OptionalHeader.SizeOfImage = peSize;
+            PeHeader.Header64.OptionalHeader.SizeOfImage = (UINT32)peSize;
             PeHeader.Header64.OptionalHeader.Subsystem = teHeader->Subsystem;
             PeHeader.Header64.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
             PeHeader.Header64.OptionalHeader.DataDirectory[EFI_IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = teHeader->DataDirectory[0].VirtualAddress;
@@ -452,17 +454,40 @@ int main(int argc, char* argv[])
     UINTN  imagesize;
     UINTN  read;
     UINT8  status;
+    char   opt_fixup = 0;
+    const char* infile = NULL;
+    const char* outfile = NULL;
 
+    // Check options
+    if (argc >= 2 && (memcmp(argv[1], "-f", 3) == 0 || memcmp(argv[1], "-fixup", 7) == 0)) {
+        opt_fixup = 1;
+    }
+    
     // Check arguments count
-    if (argc != 3) {
+    if ((opt_fixup && argc !=4) || (!opt_fixup && argc !=3)) {
         // Print usage and exit
-        printf("TE2PE v0.1.3 - converts Terse Executable image into PE32 image\n\n"
-               "Usage: TE2PE te.bin pe.bin\n");
+        printf("TE2PE v0.1.4 - converts Terse Executable image file into PE32 image file\n\n"
+               "Usage: TE2PE [-f] te_file.bin pe_file.bin\n"
+               "Options: -f, --fixup    Apply TE image base fix-up for PE image entry point\n"
+               "                        The fixup is required for certain TE images\n"
+               "                        extracted from AMI AptioV-based UEFI binaries\n"
+               "                        Try this option if the resulting PE image\n"
+               "                        appears to have incorrect entry point offset\n");
         return ERR_INVALID_PARAMETER;
     }
 
+    // Set infile and outfile
+    if (opt_fixup) {
+        infile = argv[2];
+        outfile = argv[3];
+    }
+    else {
+        infile = argv[1];
+        outfile = argv[2];
+    }
+    
     // Read input file
-    file = fopen(argv[1], "rb");
+    file = fopen(infile, "rb");
     if (!file) {
         printf("Can't open input file\n");
         return ERR_FILE_OPEN;
@@ -491,12 +516,12 @@ int main(int argc, char* argv[])
     fclose(file);
 
     // Call conversion routine
-    status = convert(buffer, filesize, &image, &imagesize);
+    status = convert(buffer, filesize, &image, &imagesize, opt_fixup);
     if (status)
         return status;
     
     // Create output file
-    file = fopen(argv[2], "wb");
+    file = fopen(outfile, "wb");
     if (!file) {
         printf("Can't create output file\n");
         return ERR_FILE_CREATE;
