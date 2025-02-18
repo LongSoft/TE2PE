@@ -305,7 +305,7 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
             PeHeader.Header32.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR32_MAGIC;
             PeHeader.Header32.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
             PeHeader.Header32.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-            PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER));
+            PeHeader.Header32.OptionalHeader.ImageBase = (UINT32)teHeader->ImageBase;
             PeHeader.Header32.OptionalHeader.SectionAlignment = 0x10;
             PeHeader.Header32.OptionalHeader.FileAlignment = 0x10;
             PeHeader.Header32.OptionalHeader.SizeOfImage = peSize;
@@ -330,7 +330,7 @@ UINT8 convert(UINT8* te, UINTN teSize, UINT8** peOut, UINTN* peOutSize)
             PeHeader.Header64.OptionalHeader.Magic = EFI_IMAGE_PE_OPTIONAL_HDR64_MAGIC;
             PeHeader.Header64.OptionalHeader.AddressOfEntryPoint = teHeader->AddressOfEntryPoint;
             PeHeader.Header64.OptionalHeader.BaseOfCode = teHeader->BaseOfCode;
-            PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)(teHeader->ImageBase - teHeader->StrippedSize + sizeof(EFI_IMAGE_TE_HEADER));
+            PeHeader.Header64.OptionalHeader.ImageBase = (UINT32)teHeader->ImageBase;
             PeHeader.Header64.OptionalHeader.SectionAlignment = 0x10;
             PeHeader.Header64.OptionalHeader.FileAlignment = 0x10;
             PeHeader.Header64.OptionalHeader.SizeOfImage = peSize;
